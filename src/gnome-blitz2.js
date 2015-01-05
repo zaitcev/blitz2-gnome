@@ -39,7 +39,7 @@ function _load_conf(filename) {
         if (key == "URL") {
             ret.url = value;
         } else if (key == "CACERT") {
-            ;
+            ret.cacert = value;
         } else {
             ;
         }
@@ -63,12 +63,17 @@ const Blitz2 = new Lang.Class({
         this._app.connect('startup', Lang.bind(this, this._onStartup));
 
         this._session = new Soup.Session();
-        // Soup.Session.prototype.add_feature.call(this._session,
-        //     new Soup.ProxyResolverDefault());
 
         // If anyone knows how to call getpwnam(), patches are welcome.
         let homeDir = GLib.getenv('HOME');
         this._conf = _load_conf(homeDir + "/.config/blitz2/blitz2.conf");
+
+        if (! this._conf.error) {
+            if ("cacert" in this._conf) {
+                this._session.ssl_ca_file = this._conf.cacert;
+            }
+            // XXX The blitz2-cli also supports SSCERT and NOCERT here.
+        }
     },
 
     _buildUI: function() {
@@ -86,7 +91,7 @@ const Blitz2 = new Lang.Class({
 
         // XXX Better than nothing, but excessively crude
         if (this._conf.error) {
-            let msg = this._conf.error.subst(0, 60);
+            let msg = this._conf.error.substr(0, 60);
             this._label_info.set_label("Conf error: " + msg);
         }
 
@@ -126,28 +131,49 @@ const Blitz2 = new Lang.Class({
     _clickUp: function() {
         if (this._conf.error) return;
 
-        this._label_info.set_label("Up");
+        this._label_info.set_label("(up)");
+
+        // XXX Implement this
     },
 
     _clickDown: function() {
         if (this._conf.error) return;
 
-        this._label_info.set_label("Down");
+        // Maybe find a better activity indication one day. Or drop entirely.
+        this._label_info.set_label("(down)");
 
         let request = Soup.Message.new('GET', this._conf.url);
+
+        // property "tls-certificate"  Read/Write (but we need CA)
+
         this._session.queue_message(request,
             Lang.bind(this, function(session, message) {
                 if (message.status_code != Soup.KnownStatusCode.OK) {
-                    // Error: 6 means SSL error
-                    this._callbackDown("Error: " + message.status_code);
+                    if (message.status_code == Soup.Status.SSL_FAILED) {
+                        // In this special case we may call
+                        // soup_message_get_https_status() ... in the future
+                        this._callbackDown("SSL Error", null);
+                    } else {
+                        this._callbackDown("Error: " + message.status_code,
+                                           null);
+                    }
                     return;
                 }
-                this._callbackDown(message.response_body.data);
+                this._callbackDown(null, message.response_body.data);
         }));
     },
 
-    _callbackDown: function(data) {
-        this._label_info.set_label(data);
+    _callbackDown: function(error, data) {
+        if (error) {
+            let msg = this._conf.error.substr(0, 60);
+            this._label_info.set_label("Net error: " + error);
+        } else {
+            // This is not a debug message. It's quite useful sometimes
+            // to see what we just downloaded into our clipboard.
+            // XXX In addition to size limiting, purge newlines and such
+            this._label_info.set_label(data.substr(0, 80));
+
+        }
     }
 });
 
